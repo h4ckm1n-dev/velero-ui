@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -36,21 +38,21 @@ func (i item) Description() string { return i.description }
 func (i item) FilterValue() string { return i.title }
 
 type model struct {
-	step                 step
-	operationList        list.Model
+	resourceDecisionList list.Model
 	contextList          list.Model
 	namespaceList        list.Model
 	resourceList         list.Model
 	backupList           list.Model
-	resourceDecisionList list.Model
-	backupNameInput      textinput.Model
+	operationList        list.Model
+	err                  error
 	selectedOp           item
 	selectedCtx          item
-	selectedNS           []list.Item
-	selectedRes          []list.Item
 	selectedBackup       item
 	backupName           string
-	err                  error
+	selectedNS           []list.Item
+	selectedRes          []list.Item
+	backupNameInput      textinput.Model
+	step                 step
 }
 
 var (
@@ -59,11 +61,28 @@ var (
 	errorStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render
 	listStyle         = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Margin(1).Width(70).Height(20)
 	selectedListStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Margin(1).Width(50).Height(20).Foreground(lipgloss.Color("205"))
+	logFile           *os.File
+	logger            *log.Logger
 )
 
+func init() {
+	var err error
+	logFile, err = os.OpenFile("program.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
+	if err != nil {
+		fmt.Printf("Error opening log file: %v\n", err)
+		os.Exit(1)
+	}
+	logger = log.New(logFile, "VELERO-UI: ", log.Ldate|log.Ltime|log.Lshortfile)
+}
+
 func runShellCommand(cmdStr string) (string, error) {
+	logger.Printf("Running command: %s", cmdStr)
 	cmd := exec.Command("sh", "-c", cmdStr)
 	output, err := cmd.CombinedOutput()
+	if err != nil {
+		logger.Printf("Command error: %v", err)
+	}
+	logger.Printf("Command output: %s", string(output))
 	return string(output), err
 }
 
@@ -85,10 +104,16 @@ func waitForCompletion(operation, name string) error {
 		statusCmd := fmt.Sprintf("velero %s describe %s --details -o json", operation, name)
 		output, err := runShellCommand(statusCmd)
 		if err != nil {
+			logger.Printf("Error fetching %s status: %v", operation, err)
 			return err
 		}
 		if strings.Contains(output, "\"Phase\": \"Completed\"") {
+			logger.Printf("%s %s completed successfully", operation, name)
 			return nil
+		}
+		if strings.Contains(output, "\"Phase\": \"Failed\"") {
+			logger.Printf("%s %s failed", operation, name)
+			return fmt.Errorf("%s %s failed", operation, name)
 		}
 		time.Sleep(5 * time.Second)
 	}
@@ -177,10 +202,30 @@ func (m *model) toggleSelection(l *list.Model, selected *[]list.Item) {
 	for i, selectedItem := range *selected {
 		if selectedItem.FilterValue() == item.FilterValue() {
 			*selected = append((*selected)[:i], (*selected)[i+1:]...)
+			logger.Printf("Deselected item: %s", item.FilterValue())
 			return
 		}
 	}
 	*selected = append(*selected, item)
+	logger.Printf("Selected item: %s", item.FilterValue())
+}
+
+func parseResources(output string) []list.Item {
+	lines := strings.Split(output, "\n")
+	var items []list.Item
+	re := regexp.MustCompile(`^(pod|service|deployment\.apps|replicaset\.apps)/([^ ]+)`)
+	seen := make(map[string]bool)
+	for _, line := range lines {
+		matches := re.FindStringSubmatch(line)
+		if matches != nil {
+			resource := matches[0]
+			if !seen[resource] {
+				items = append(items, item{title: resource, description: ""})
+				seen[resource] = true
+			}
+		}
+	}
+	return items
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -191,43 +236,51 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch m.step {
 			case stepOperation:
 				m.selectedOp = m.operationList.SelectedItem().(item)
+				logger.Printf("Selected operation: %s", m.selectedOp.Title())
 				if m.selectedOp.Title() == "Backup" {
 					m.step = stepContext
 					contextItems, err := fetchItems("kubectl config get-contexts -o name")
 					if err != nil {
 						m.err = fmt.Errorf("error fetching contexts: %w", err)
+						logger.Printf("Error: %v", m.err)
 						return m, tea.Quit
 					}
 					m.contextList.SetItems(contextItems)
 				} else {
 					m.step = stepBackupSelection
-					backupItems, err := fetchItems("velero backup get -o custom-columns=NAME:.metadata.name --no-headers") // Use Velero to list backups
+					backupItems, err := fetchItems("velero backup get -o custom-columns=NAME:.metadata.name --no-headers")
 					if err != nil {
 						m.err = fmt.Errorf("error fetching backups: %w", err)
+						logger.Printf("Error: %v", m.err)
 						return m, tea.Quit
 					}
 					m.backupList.SetItems(backupItems)
 				}
 			case stepBackupSelection:
 				m.selectedBackup = m.backupList.SelectedItem().(item)
+				logger.Printf("Selected backup: %s", m.selectedBackup.Title())
 				m.step = stepContext
 				contextItems, err := fetchItems("kubectl config get-contexts -o name")
 				if err != nil {
 					m.err = fmt.Errorf("error fetching contexts: %w", err)
+					logger.Printf("Error: %v", m.err)
 					return m, tea.Quit
 				}
 				m.contextList.SetItems(contextItems)
 			case stepContext:
 				m.selectedCtx = m.contextList.SelectedItem().(item)
+				logger.Printf("Selected context: %s", m.selectedCtx.Title())
 				m.step = stepNamespace
 				namespaceItems, err := fetchItems("kubectl get namespaces -o custom-columns=NAME:.metadata.name --no-headers")
 				if err != nil {
 					m.err = fmt.Errorf("error fetching namespaces: %w", err)
+					logger.Printf("Error: %v", m.err)
 					return m, tea.Quit
 				}
 				m.namespaceList.SetItems(namespaceItems)
 			case stepNamespace:
 				if len(m.selectedNS) > 0 {
+					logger.Printf("Selected namespaces: %v", m.selectedNS)
 					if m.selectedOp.Title() == "Backup" {
 						m.resourceDecisionList.Title = titleStyle("Backup Specific Resources? (Press Enter to Confirm)")
 					} else {
@@ -236,6 +289,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.step = stepResourceDecision
 				} else {
 					m.err = fmt.Errorf("no namespace selected")
+					logger.Printf("Error: %v", m.err)
 				}
 			case stepResourceDecision:
 				if m.resourceDecisionList.SelectedItem().(item).Title() == "Yes" {
@@ -247,11 +301,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							namespaceStrs = append(namespaceStrs, i.Title())
 						}
 					}
-					resourceItems, err := fetchItems(fmt.Sprintf("kubectl get all -n %s --no-headers", strings.Join(namespaceStrs, " ")))
+					resourceOutput, err := runShellCommand(fmt.Sprintf("kubectl get all -n %s --no-headers", strings.Join(namespaceStrs, " ")))
 					if err != nil {
 						m.err = fmt.Errorf("error fetching resources: %w", err)
+						logger.Printf("Error: %v", m.err)
 						return m, tea.Quit
 					}
+					resourceItems := parseResources(resourceOutput)
 					m.resourceList.SetItems(resourceItems)
 					m.resourceList.SetWidth(m.namespaceList.Width())
 					m.resourceList.SetHeight(m.namespaceList.Height())
@@ -261,13 +317,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case stepResource:
 				if len(m.selectedRes) > 0 {
+					logger.Printf("Selected resources: %v", m.selectedRes)
 					m.step = stepBackupName
 					return m, m.backupNameInput.Focus()
 				} else {
 					m.err = fmt.Errorf("no resource selected")
+					logger.Printf("Error: %v", m.err)
 				}
 			case stepBackupName:
 				m.backupName = m.backupNameInput.Value()
+				logger.Printf("Entered backup name: %s", m.backupName)
 				m.step = stepExecute
 				return m, tea.Quit
 			case stepExecute:
@@ -278,31 +337,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							namespaceStrs = append(namespaceStrs, i.Title())
 						}
 					}
-					backupCmd := fmt.Sprintf("velero backup create %s --include-namespaces %s", m.backupName, strings.Join(namespaceStrs, ","))
-					if _, err := runShellCommand(backupCmd); err != nil {
+					backupCmd := fmt.Sprintf("velero backup create %s --include-namespaces %s --kubecontext %s", m.backupName, strings.Join(namespaceStrs, ","), m.selectedCtx.Title())
+					output, err := runShellCommand(backupCmd)
+					logger.Printf("Backup command output: %s", output)
+					if err != nil {
 						m.err = fmt.Errorf("error starting backup: %w", err)
+						logger.Printf("Error: %v\nOutput: %s", m.err, output)
 						return m, tea.Quit
 					}
 					if err := waitForCompletion("backup", m.backupName); err != nil {
 						m.err = fmt.Errorf("error waiting for backup completion: %w", err)
+						logger.Printf("Error: %v", m.err)
 						return m, tea.Quit
 					}
-					fmt.Println("Backup complete")
+					logger.Println("Backup complete")
 				} else {
 					restoreCmd := fmt.Sprintf("velero restore create --from-backup %s", m.selectedBackup.Title())
-					if _, err := runShellCommand(restoreCmd); err != nil {
+					output, err := runShellCommand(restoreCmd)
+					logger.Printf("Restore command output: %s", output)
+					if err != nil {
 						m.err = fmt.Errorf("error starting restore: %w", err)
+						logger.Printf("Error: %v\nOutput: %s", m.err, output)
 						return m, tea.Quit
 					}
 					if err := waitForCompletion("restore", m.selectedBackup.Title()); err != nil {
 						m.err = fmt.Errorf("error waiting for restore completion: %w", err)
+						logger.Printf("Error: %v", m.err)
 						return m, tea.Quit
 					}
-					fmt.Println("Restore complete")
+					logger.Println("Restore complete")
 				}
 				return m, tea.Quit
 			}
 		case "ctrl+c", "q":
+			logger.Println("Program exited by user")
 			return m, tea.Quit
 		case " ":
 			switch m.step {
@@ -380,12 +448,16 @@ func (m model) View() string {
 }
 
 func main() {
+	defer logFile.Close()
+	logger.Println("Program started")
 	p := tea.NewProgram(initialModel())
 	if err := func() error {
 		_, err := p.Run()
 		return err
 	}(); err != nil {
+		logger.Printf("Error: %v\n", err)
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
 	}
+	logger.Println("Program finished successfully")
 }

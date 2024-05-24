@@ -1,0 +1,24 @@
+
+
+VELERO-UI: 2024/05/24 23:47:24 main.go:462: Program started
+VELERO-UI: 2024/05/24 23:47:24 main.go:79: Running command: velero version
+VELERO-UI: 2024/05/24 23:47:24 main.go:86: Command output: Client:
+	Version: v1.13.2
+	Git commit: 4d961fb6fec384ed7f3c1b7c65c818106107f5a6
+<error getting server version: no matches for kind "ServerStatusRequest" in version "velero.io/v1">
+VELERO-UI: 2024/05/24 23:47:26 main.go:249: Selected operation: Backup
+VELERO-UI: 2024/05/24 23:47:26 main.go:79: Running command: kubectl config get-contexts -o name
+VELERO-UI: 2024/05/24 23:47:26 main.go:86: Command output: minikube
+VELERO-UI: 2024/05/24 23:47:26 main.go:282: Selected context: minikube
+VELERO-UI: 2024/05/24 23:47:26 main.go:79: Running command: kubectl get namespaces -o custom-columns=NAME:.metadata.name --no-headers
+VELERO-UI: 2024/05/24 23:47:26 main.go:86: Command output: blackbox
+default
+ingress-nginx
+kube-node-lease
+kube-public
+kube-system
+prom-stack
+VELERO-UI: 2024/05/24 23:47:27 main.go:220: Selected item: blackbox
+VELERO-UI: 2024/05/24 23:47:28 main.go:293: Selected namespaces: [{blackbox }]
+VELERO-UI: 2024/05/24 23:47:31 main.go:339: Entered backup name: test
+VELERO-UI: 2024/05/24 23:47:31 main.go:476: Program finished successfully
