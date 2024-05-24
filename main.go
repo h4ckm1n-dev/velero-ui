@@ -102,7 +102,7 @@ func initialModel() model {
 
 	delegate := list.NewDefaultDelegate()
 	operationList := list.New(operations, delegate, 0, 0)
-	operationList.Title = titleStyle("Select Operation (Press Enter to Confirm)")
+	operationList.Title = titleStyle("Velero-UI: Select Operation (Press Enter to Confirm)")
 	operationList.SetShowStatusBar(false)
 	operationList.SetFilteringEnabled(false)
 	operationList.SetShowHelp(false)
