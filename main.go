@@ -36,21 +36,21 @@ func (i item) Description() string { return i.description }
 func (i item) FilterValue() string { return i.title }
 
 type model struct {
-	resourceDecisionList list.Model
+	step                 step
+	operationList        list.Model
 	contextList          list.Model
 	namespaceList        list.Model
 	resourceList         list.Model
 	backupList           list.Model
-	operationList        list.Model
-	err                  error
+	resourceDecisionList list.Model
+	backupNameInput      textinput.Model
 	selectedOp           item
 	selectedCtx          item
-	selectedBackup       item
-	backupName           string
 	selectedNS           []list.Item
 	selectedRes          []list.Item
-	backupNameInput      textinput.Model
-	step                 step
+	selectedBackup       item
+	backupName           string
+	err                  error
 }
 
 var (
@@ -141,7 +141,6 @@ func initialModel() model {
 		item{title: "No", description: "Restore the entire namespace"},
 	}
 	resourceDecisionList := list.New(resourceDecisionItems, delegate, 0, 0)
-	resourceDecisionList.Title = titleStyle("Restore Specific Resources? (Press Enter to Confirm)")
 	resourceDecisionList.SetShowStatusBar(false)
 	resourceDecisionList.SetFilteringEnabled(false)
 	resourceDecisionList.SetShowHelp(false)
@@ -229,6 +228,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.namespaceList.SetItems(namespaceItems)
 			case stepNamespace:
 				if len(m.selectedNS) > 0 {
+					if m.selectedOp.Title() == "Backup" {
+						m.resourceDecisionList.Title = titleStyle("Backup Specific Resources? (Press Enter to Confirm)")
+					} else {
+						m.resourceDecisionList.Title = titleStyle("Restore Specific Resources? (Press Enter to Confirm)")
+					}
 					m.step = stepResourceDecision
 				} else {
 					m.err = fmt.Errorf("no namespace selected")
