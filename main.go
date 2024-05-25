@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -59,28 +61,29 @@ var (
 	errorStyle        = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true).Render
 	listStyle         = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Margin(1).Width(70).Height(20)
 	selectedListStyle = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).Margin(1).Width(50).Height(20).Foreground(lipgloss.Color("205"))
-	logFile           *os.File
 	logger            *log.Logger
+	debug             bool
+	logBuffer         bytes.Buffer
 )
 
-func init() {
-	var err error
-	logFile, err = os.OpenFile("program.log", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0666)
-	if err != nil {
-		fmt.Printf("Error opening log file: %v\n", err)
-		os.Exit(1)
+func initLogger() {
+	if debug {
+		logger = log.New(&logBuffer, "VELERO-UI: ", log.Ldate|log.Ltime|log.Lshortfile)
+	} else {
+		logger = log.New(nil, "", 0)
 	}
-	logger = log.New(logFile, "VELERO-UI: ", log.Ldate|log.Ltime|log.Lshortfile)
 }
 
 func runShellCommand(cmdStr string, logOutput bool) (string, error) {
-	logger.Printf("Running command: %s", cmdStr)
+	if debug {
+		logger.Printf("Running command: %s", cmdStr)
+	}
 	cmd := exec.Command("sh", "-c", cmdStr)
 	output, err := cmd.CombinedOutput()
-	if err != nil {
+	if err != nil && debug {
 		logger.Printf("Command error: %v", err)
 	}
-	if logOutput {
+	if logOutput && debug {
 		logger.Printf("Command output: %s", string(output))
 	}
 	return string(output), err
@@ -127,16 +130,19 @@ func waitForCompletion(operation, name string) error {
 	for {
 		statusCmd := fmt.Sprintf("velero %s describe %s --details -o json", operation, name)
 		output, err := runShellCommand(statusCmd, false)
-		if err != nil {
+		if err != nil && debug {
 			logger.Printf("Error fetching %s status: %v", operation, err)
-			return err
 		}
 		if strings.Contains(output, "\"Phase\": \"Completed\"") {
-			logger.Printf("%s %s completed successfully", operation, name)
+			if debug {
+				logger.Printf("%s %s completed successfully", operation, name)
+			}
 			return nil
 		}
 		if strings.Contains(output, "\"Phase\": \"Failed\"") {
-			logger.Printf("%s %s failed", operation, name)
+			if debug {
+				logger.Printf("%s %s failed", operation, name)
+			}
 			return fmt.Errorf("%s %s failed", operation, name)
 		}
 		time.Sleep(5 * time.Second)
@@ -206,12 +212,16 @@ func (m *model) toggleSelection(l *list.Model, selected *[]list.Item) {
 	for i, selectedItem := range *selected {
 		if selectedItem.FilterValue() == item.FilterValue() {
 			*selected = append((*selected)[:i], (*selected)[i+1:]...)
-			logger.Printf("Deselected item: %s", item.FilterValue())
+			if debug {
+				logger.Printf("Deselected item: %s", item.FilterValue())
+			}
 			return
 		}
 	}
 	*selected = append(*selected, item)
-	logger.Printf("Selected item: %s", item.FilterValue())
+	if debug {
+		logger.Printf("Selected item: %s", item.FilterValue())
+	}
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -220,8 +230,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "enter":
 			return m.handleEnter()
-		case "ctrl+c", "q":
-			logger.Println("Program exited by user")
+		case "ctrl+c":
+			if debug {
+				logger.Println("Program exited by user")
+			}
 			return m, tea.Quit
 		case " ":
 			return m.handleSpace()
@@ -272,7 +284,9 @@ func (m model) handleSpace() (tea.Model, tea.Cmd) {
 
 func (m model) handleOperationEnter() (tea.Model, tea.Cmd) {
 	m.selectedOp = m.operationList.SelectedItem().(item)
-	logger.Printf("Selected operation: %s", m.selectedOp.Title())
+	if debug {
+		logger.Printf("Selected operation: %s", m.selectedOp.Title())
+	}
 	if m.selectedOp.Title() == "Backup" {
 		m.step = stepContext
 		return m.fetchContexts()
@@ -284,33 +298,43 @@ func (m model) handleOperationEnter() (tea.Model, tea.Cmd) {
 
 func (m model) handleBackupSelectionEnter() (tea.Model, tea.Cmd) {
 	m.selectedBackup = m.backupList.SelectedItem().(item)
-	logger.Printf("Selected backup: %s", m.selectedBackup.Title())
+	if debug {
+		logger.Printf("Selected backup: %s", m.selectedBackup.Title())
+	}
 	m.step = stepContext
 	return m.fetchContexts()
 }
 
 func (m model) handleContextEnter() (tea.Model, tea.Cmd) {
 	m.selectedCtx = m.contextList.SelectedItem().(item)
-	logger.Printf("Selected context: %s", m.selectedCtx.Title())
+	if debug {
+		logger.Printf("Selected context: %s", m.selectedCtx.Title())
+	}
 	m.step = stepNamespace
 	return m.fetchNamespaces()
 }
 
 func (m model) handleNamespaceEnter() (tea.Model, tea.Cmd) {
 	if len(m.selectedNS) > 0 {
-		logger.Printf("Selected namespaces: %v", m.selectedNS)
+		if debug {
+			logger.Printf("Selected namespaces: %v", m.selectedNS)
+		}
 		m.step = stepBackupName
 		return m, m.backupNameInput.Focus()
 	} else {
 		m.err = fmt.Errorf("no namespace selected")
-		logger.Printf(errorMessageFormat, m.err)
+		if debug {
+			logger.Printf(errorMessageFormat, m.err)
+		}
 	}
 	return m, nil
 }
 
 func (m model) handleBackupNameEnter() (tea.Model, tea.Cmd) {
 	m.backupName = m.backupNameInput.Value()
-	logger.Printf("Entered backup name: %s", m.backupName)
+	if debug {
+		logger.Printf("Entered backup name: %s", m.backupName)
+	}
 	m.step = stepExecute
 	return m.executeOperation()
 }
@@ -333,16 +357,24 @@ func (m model) executeOperation() (tea.Model, tea.Cmd) {
 	output, err := runShellCommand(cmdStr, true)
 	if err != nil {
 		m.err = fmt.Errorf("error executing command: %w", err)
-		logger.Printf("Error: %v\nOutput: %s", m.err, output)
+		if debug {
+			logger.Printf("Error: %v\nOutput: %s", m.err, output)
+		}
 		return m, tea.Quit
 	}
-	logger.Printf("Command output: %s", output)
+	if debug {
+		logger.Printf("Command output: %s", output)
+	}
 	if err := waitForCompletion(strings.ToLower(m.selectedOp.Title()), m.backupName); err != nil {
 		m.err = fmt.Errorf("error waiting for completion: %w", err)
-		logger.Printf(errorMessageFormat, m.err)
+		if debug {
+			logger.Printf(errorMessageFormat, m.err)
+		}
 		return m, tea.Quit
 	}
-	logger.Println("Operation completed successfully")
+	if debug {
+		logger.Println("Operation completed successfully")
+	}
 	return m, tea.Quit
 }
 
@@ -350,7 +382,9 @@ func (m model) fetchContexts() (tea.Model, tea.Cmd) {
 	contextItems, err := fetchItems("kubectl config get-contexts -o name")
 	if err != nil {
 		m.err = fmt.Errorf("error fetching contexts: %w", err)
-		logger.Printf(errorMessageFormat, m.err)
+		if debug {
+			logger.Printf(errorMessageFormat, m.err)
+		}
 		return m, tea.Quit
 	}
 	m.contextList.SetItems(contextItems)
@@ -361,7 +395,9 @@ func (m model) fetchNamespaces() (tea.Model, tea.Cmd) {
 	namespaceItems, err := fetchItems("kubectl get namespaces -o custom-columns=NAME:.metadata.name --no-headers")
 	if err != nil {
 		m.err = fmt.Errorf("error fetching namespaces: %w", err)
-		logger.Printf(errorMessageFormat, m.err)
+		if debug {
+			logger.Printf(errorMessageFormat, m.err)
+		}
 		return m, tea.Quit
 	}
 	m.namespaceList.SetItems(namespaceItems)
@@ -372,7 +408,9 @@ func (m model) fetchBackups() (tea.Model, tea.Cmd) {
 	backupItems, err := fetchBackups()
 	if err != nil {
 		m.err = fmt.Errorf("error fetching backups: %w", err)
-		logger.Printf(errorMessageFormat, m.err)
+		if debug {
+			logger.Printf(errorMessageFormat, m.err)
+		}
 		return m, tea.Quit
 	}
 	m.backupList.SetItems(backupItems)
@@ -418,14 +456,27 @@ func (m model) View() string {
 }
 
 func main() {
-	defer logFile.Close()
+	debugPtr := flag.Bool("debug", false, "Enable debug logging")
+	flag.Parse()
+
+	debug = *debugPtr
+
+	initLogger()
+
 	p := tea.NewProgram(initialModel())
 	if err := func() error {
 		_, err := p.Run()
 		return err
 	}(); err != nil {
-		logger.Printf("Error: %v\n", err)
+		if debug {
+			logger.Printf("Error: %v\n", err)
+		}
 		fmt.Printf("Error: %v\n", err)
 		os.Exit(1)
+	}
+
+	if debug {
+		fmt.Println("\nDebug log:")
+		fmt.Println(logBuffer.String())
 	}
 }
