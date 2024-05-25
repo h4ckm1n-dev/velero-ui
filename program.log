@@ -1,0 +1,20 @@
+
+VELERO-UI: 2024/05/25 13:45:04 main.go:275: Selected operation: Backup
+VELERO-UI: 2024/05/25 13:45:04 main.go:77: Running command: kubectl config get-contexts -o name
+VELERO-UI: 2024/05/25 13:45:05 main.go:314: Selected context: minikube
+VELERO-UI: 2024/05/25 13:45:05 main.go:77: Running command: kubectl get namespaces -o custom-columns=NAME:.metadata.name --no-headers
+VELERO-UI: 2024/05/25 13:45:06 main.go:214: Selected item: blackbox
+VELERO-UI: 2024/05/25 13:45:08 main.go:328: Selected namespaces: [{blackbox }]
+VELERO-UI: 2024/05/25 13:45:11 main.go:340: Entered backup name: test
+VELERO-UI: 2024/05/25 13:45:36 main.go:275: Selected operation: Backup
+VELERO-UI: 2024/05/25 13:45:36 main.go:77: Running command: kubectl config get-contexts -o name
+VELERO-UI: 2024/05/25 13:45:37 main.go:314: Selected context: minikube
+VELERO-UI: 2024/05/25 13:45:37 main.go:77: Running command: kubectl get namespaces -o custom-columns=NAME:.metadata.name --no-headers
+VELERO-UI: 2024/05/25 13:45:39 main.go:214: Selected item: blackbox
+VELERO-UI: 2024/05/25 13:45:40 main.go:328: Selected namespaces: [{blackbox }]
+VELERO-UI: 2024/05/25 13:45:43 main.go:340: Entered backup name: test
+VELERO-UI: 2024/05/25 13:45:50 main.go:275: Selected operation: Restore
+VELERO-UI: 2024/05/25 13:45:50 main.go:77: Running command: velero backup get -o json
+VELERO-UI: 2024/05/25 13:45:50 main.go:81: Command error: exit status 1
+VELERO-UI: 2024/05/25 13:45:50 main.go:290: 
+Error: error fetching backups: exit status 1
