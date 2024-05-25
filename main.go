@@ -275,52 +275,25 @@ func (m model) handleOperationEnter() (tea.Model, tea.Cmd) {
 	logger.Printf("Selected operation: %s", m.selectedOp.Title())
 	if m.selectedOp.Title() == "Backup" {
 		m.step = stepContext
-		contextItems, err := fetchItems("kubectl config get-contexts -o name")
-		if err != nil {
-			m.err = fmt.Errorf("error fetching contexts: %w", err)
-			logger.Printf(errorMessageFormat, m.err)
-			return m, tea.Quit
-		}
-		m.contextList.SetItems(contextItems)
+		return m.fetchContexts()
 	} else {
 		m.step = stepBackupSelection
-		backupItems, err := fetchBackups()
-		if err != nil {
-			m.err = fmt.Errorf("error fetching backups: %w", err)
-			logger.Printf(errorMessageFormat, m.err)
-			return m, tea.Quit
-		}
-		m.backupList.SetItems(backupItems)
+		return m.fetchBackups()
 	}
-	return m, nil
 }
 
 func (m model) handleBackupSelectionEnter() (tea.Model, tea.Cmd) {
 	m.selectedBackup = m.backupList.SelectedItem().(item)
 	logger.Printf("Selected backup: %s", m.selectedBackup.Title())
 	m.step = stepContext
-	contextItems, err := fetchItems("kubectl config get-contexts -o name")
-	if err != nil {
-		m.err = fmt.Errorf("error fetching contexts: %w", err)
-		logger.Printf(errorMessageFormat, m.err)
-		return m, tea.Quit
-	}
-	m.contextList.SetItems(contextItems)
-	return m, nil
+	return m.fetchContexts()
 }
 
 func (m model) handleContextEnter() (tea.Model, tea.Cmd) {
 	m.selectedCtx = m.contextList.SelectedItem().(item)
 	logger.Printf("Selected context: %s", m.selectedCtx.Title())
 	m.step = stepNamespace
-	namespaceItems, err := fetchItems("kubectl get namespaces -o custom-columns=NAME:.metadata.name --no-headers")
-if err != nil {
-		m.err = fmt.Errorf("error fetching namespaces: %w", err)
-		logger.Printf(errorMessageFormat, m.err)
-		return m, tea.Quit
-	}
-	m.namespaceList.SetItems(namespaceItems)
-	return m, nil
+	return m.fetchNamespaces()
 }
 
 func (m model) handleNamespaceEnter() (tea.Model, tea.Cmd) {
@@ -339,50 +312,71 @@ func (m model) handleBackupNameEnter() (tea.Model, tea.Cmd) {
 	m.backupName = m.backupNameInput.Value()
 	logger.Printf("Entered backup name: %s", m.backupName)
 	m.step = stepExecute
-	return m, tea.Quit
+	return m.executeOperation()
 }
 
 func (m model) handleExecuteEnter() (tea.Model, tea.Cmd) {
+	return m.executeOperation()
+}
+
+func (m model) executeOperation() (tea.Model, tea.Cmd) {
+	var cmdStr string
 	if m.selectedOp.Title() == "Backup" {
-		namespaceStrs := make([]string, 0, len(m.selectedNS))
-		for _, namespaceItem := range m.selectedNS {
-			if i, ok := namespaceItem.(item); ok {
-				namespaceStrs = append(namespaceStrs, i.Title())
-			}
+		namespaces := make([]string, len(m.selectedNS))
+		for i, ns := range m.selectedNS {
+			namespaces[i] = ns.(item).Title()
 		}
-		backupCmd := fmt.Sprintf("velero backup create %s --include-namespaces %s --kubecontext %s", m.backupName, strings.Join(namespaceStrs, ","), m.selectedCtx.Title())
-		output, err := runShellCommand(backupCmd, true)
-		logger.Printf("Backup command output: %s", output)
-		if err != nil {
-			m.err = fmt.Errorf("error starting backup: %w", err)
-			logger.Printf("Error: %v\nOutput: %s", m.err, output)
-			return m, tea.Quit
-		}
-		// Add a loop to fetch and log the status until the backup is completed or failed
-		if err := waitForCompletion("backup", m.backupName); err != nil {
-			m.err = fmt.Errorf("error waiting for backup completion: %w", err)
-			logger.Printf(errorMessageFormat, m.err)
-			return m, tea.Quit
-		}
-		logger.Println("Backup complete")
+		cmdStr = fmt.Sprintf("velero backup create %s --include-namespaces %s --kubecontext %s", m.backupName, strings.Join(namespaces, ","), m.selectedCtx.Title())
 	} else {
-		restoreCmd := fmt.Sprintf("velero restore create --from-backup %s", m.selectedBackup.Title())
-		output, err := runShellCommand(restoreCmd, true)
-		logger.Printf("Restore command output: %s", output)
-		if err != nil {
-			m.err = fmt.Errorf("error starting restore: %w", err)
-			logger.Printf("Error: %v\nOutput: %s", m.err, output)
-			return m, tea.Quit
-		}
-		// Add a loop to fetch and log the status until the restore is completed or failed
-		if err := waitForCompletion("restore", m.selectedBackup.Title()); err != nil {
-			m.err = fmt.Errorf("error waiting for restore completion: %w", err)
-			logger.Printf(errorMessageFormat, m.err)
-			return m, tea.Quit
-		}
-		logger.Println("Restore complete")
+		cmdStr = fmt.Sprintf("velero restore create --from-backup %s", m.selectedBackup.Title())
 	}
+	output, err := runShellCommand(cmdStr, true)
+	if err != nil {
+		m.err = fmt.Errorf("error executing command: %w", err)
+		logger.Printf("Error: %v\nOutput: %s", m.err, output)
+		return m, tea.Quit
+	}
+	logger.Printf("Command output: %s", output)
+	if err := waitForCompletion(strings.ToLower(m.selectedOp.Title()), m.backupName); err != nil {
+		m.err = fmt.Errorf("error waiting for completion: %w", err)
+		logger.Printf(errorMessageFormat, m.err)
+		return m, tea.Quit
+	}
+	logger.Println("Operation completed successfully")
 	return m, tea.Quit
+}
+
+func (m model) fetchContexts() (tea.Model, tea.Cmd) {
+	contextItems, err := fetchItems("kubectl config get-contexts -o name")
+	if err != nil {
+		m.err = fmt.Errorf("error fetching contexts: %w", err)
+		logger.Printf(errorMessageFormat, m.err)
+		return m, tea.Quit
+	}
+	m.contextList.SetItems(contextItems)
+	return m, nil
+}
+
+func (m model) fetchNamespaces() (tea.Model, tea.Cmd) {
+	namespaceItems, err := fetchItems("kubectl get namespaces -o custom-columns=NAME:.metadata.name --no-headers")
+	if err != nil {
+		m.err = fmt.Errorf("error fetching namespaces: %w", err)
+		logger.Printf(errorMessageFormat, m.err)
+		return m, tea.Quit
+	}
+	m.namespaceList.SetItems(namespaceItems)
+	return m, nil
+}
+
+func (m model) fetchBackups() (tea.Model, tea.Cmd) {
+	backupItems, err := fetchBackups()
+	if err != nil {
+		m.err = fmt.Errorf("error fetching backups: %w", err)
+		logger.Printf(errorMessageFormat, m.err)
+		return m, tea.Quit
+	}
+	m.backupList.SetItems(backupItems)
+	return m, nil
 }
 
 func renderSelectedItems(selected []list.Item) string {
